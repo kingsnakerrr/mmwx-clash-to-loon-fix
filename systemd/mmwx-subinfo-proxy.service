@@ -1,0 +1,15 @@
+[Unit]
+Description=MMWX subscription compatibility proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/mmwx-subfix.conf
+ExecStart=/usr/bin/python3 /opt/mmwx-subinfo-proxy/proxy.py
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

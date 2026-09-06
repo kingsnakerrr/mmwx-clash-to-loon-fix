@@ -1,0 +1,8 @@
+[Unit]
+Description=Check whether MMWX officially supports complete Clash-to-Loon conversion
+After=docker.service mmwx-subinfo-proxy.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/mmwx-subfix.conf
+ExecStart=/usr/bin/python3 /opt/mmwx-subinfo-proxy/watch-clash-to-loon.py

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the MMWX Clash-to-Loon compatibility check daily
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=24h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
