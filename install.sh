@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 RAW_BASE="${MMWX_FIX_RAW_BASE:-https://raw.githubusercontent.com/kingsnakerrr/mmwx-clash-to-loon-fix/main}"
 INSTALL_DIR="/opt/mmwx-subinfo-proxy"
 CONFIG_FILE="/etc/mmwx-subfix.conf"
@@ -42,7 +42,6 @@ done
 
 [[ $EUID -eq 0 ]] || { echo "请使用 root 或 sudo 运行。" >&2; exit 1; }
 [[ $DOMAIN =~ ^[A-Za-z0-9.-]+$ ]] || { echo "--domain 必填且格式不正确。" >&2; exit 1; }
-[[ -f $DB ]] || { echo "找不到数据库: $DB" >&2; exit 1; }
 for command in python3 curl systemctl; do
   command -v "$command" >/dev/null || { echo "缺少命令: $command" >&2; exit 1; }
 done
@@ -68,6 +67,17 @@ fetch_file() {
     curl -fsSL "$RAW_BASE/$relative" -o "$destination"
   fi
 }
+
+fetch_file "src/diagnose.py" "$TMP_DIR/diagnose.py"
+chmod 0755 "$TMP_DIR/diagnose.py"
+echo "第一步：检查妙妙屋安装和官方 Bug..."
+if ! env \
+  MMWX_BACKEND="$BACKEND" MMWX_DB="$DB" MMWX_DOMAIN="$DOMAIN" \
+  MMWX_CONTAINER="$CONTAINER" \
+  python3 "$TMP_DIR/diagnose.py" --mode pre | tee "$TMP_DIR/preflight.log"; then
+  echo "妙妙屋安装检查失败，未执行任何修复。" >&2
+  exit 1
+fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$INSTALL_DIR/backups/$STAMP"
@@ -99,10 +109,12 @@ PY
   printf '%s\n' "$PREVIOUS_NOTIFY" > "$INSTALL_DIR/notify-subscribe-fetch.previous"
 fi
 
+echo "第二步：安装兼容修复..."
 fetch_file "src/proxy.py" "$TMP_DIR/proxy.py"
 fetch_file "src/proxy-header-only.py" "$TMP_DIR/proxy.py.header-only"
 fetch_file "src/watch-clash-to-loon.py" "$TMP_DIR/watch-clash-to-loon.py"
-python3 -m py_compile "$TMP_DIR/proxy.py" "$TMP_DIR/proxy.py.header-only" "$TMP_DIR/watch-clash-to-loon.py"
+python3 -m py_compile "$TMP_DIR/diagnose.py" "$TMP_DIR/proxy.py" "$TMP_DIR/proxy.py.header-only" "$TMP_DIR/watch-clash-to-loon.py"
+install -m 0755 "$TMP_DIR/diagnose.py" "$INSTALL_DIR/diagnose.py"
 install -m 0755 "$TMP_DIR/proxy.py" "$INSTALL_DIR/proxy.py"
 install -m 0755 "$TMP_DIR/proxy.py.header-only" "$INSTALL_DIR/proxy.py.header-only"
 install -m 0755 "$TMP_DIR/watch-clash-to-loon.py" "$INSTALL_DIR/watch-clash-to-loon.py"
@@ -200,6 +212,15 @@ systemctl daemon-reload
 systemctl enable --now mmwx-subinfo-proxy.service
 systemctl enable --now mmwx-clash-to-loon-watch.timer
 systemctl is-active --quiet mmwx-subinfo-proxy.service
+
+echo "第三步：验证修复结果..."
+if ! env \
+  MMWX_BACKEND="$BACKEND" MMWX_DB="$DB" MMWX_DOMAIN="$DOMAIN" \
+  MMWX_CONTAINER="$CONTAINER" MMWX_DIAGNOSTIC_PROXY="http://127.0.0.1:12890" \
+  python3 "$INSTALL_DIR/diagnose.py" --mode post | tee "$INSTALL_DIR/last-diagnostic.txt"; then
+  echo "修复无效：请把 $INSTALL_DIR/last-diagnostic.txt 的内容提交给维护者或 AI。" >&2
+  exit 1
+fi
 
 echo "安装完成（v$VERSION）。备份目录: $BACKUP_DIR"
 echo "测试链接格式: https://$DOMAIN/x/你的短码?t=clash-to-loon"

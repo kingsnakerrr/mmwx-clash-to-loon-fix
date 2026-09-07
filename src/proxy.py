@@ -417,7 +417,7 @@ def send_subscription_notification(username, path, user_agent, client_ip):
 
 
 def schedule_subscription_notification(username, path, user_agent, client_ip):
-    if not PROXY_NOTIFY_ENABLED:
+    if not PROXY_NOTIFY_ENABLED or user_agent.startswith('mmwx-fix-diagnostic/'):
         return
     match = TOKEN_RE.match(path)
     code = match.group(1) if match else path
