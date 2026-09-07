@@ -51,11 +51,15 @@ sudo bash install.sh \
 2. 备份并安装兼容服务。
 3. 使用实际订阅复测 Loon 段落、策略组、代理链、FINAL 规则、流量响应头和通知接管状态。
 
-只有第三步全部通过才显示“安装完成”。如有一项失败，脚本会输出 `MMWX_FIX_RESULT=修复无效` 和 `MMWX_UNRESOLVED_BUGS=...`，同时把完整结果保存到：
+只有第三步全部通过才保留补丁并显示“安装完成”。如有一项失败，脚本会自动恢复安装前的代理服务、systemd 单元、Nginx 配置和通知开关，不保留无效补丁；更新失败时则恢复上一版。随后输出 `MMWX_FIX_RESULT=检测到Bug，但当前补丁修复无效，已撤销本次安装` 和 `MMWX_UNRESOLVED_BUGS=...`。
+
+失败报告保存在当次备份目录：
 
 ```text
-/opt/mmwx-subinfo-proxy/last-diagnostic.txt
+/opt/mmwx-subinfo-proxy/backups/时间/failed-diagnostic.txt
 ```
+
+成功时的最近一次报告仍保存在 `/opt/mmwx-subinfo-proxy/last-diagnostic.txt`。
 
 ## 更新
 

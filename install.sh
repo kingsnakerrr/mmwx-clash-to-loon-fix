@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION="1.1.0"
+VERSION="1.1.1"
 RAW_BASE="${MMWX_FIX_RAW_BASE:-https://raw.githubusercontent.com/kingsnakerrr/mmwx-clash-to-loon-fix/main}"
 INSTALL_DIR="/opt/mmwx-subinfo-proxy"
 CONFIG_FILE="/etc/mmwx-subfix.conf"
@@ -57,7 +57,40 @@ fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+MUTATION_STARTED=0
+ROLLBACK_DONE=0
+cleanup() {
+  local status=$?
+  if [[ $status -ne 0 && $MUTATION_STARTED -eq 1 && $ROLLBACK_DONE -eq 0 ]] && \
+     declare -F rollback_failed_fix >/dev/null; then
+    rollback_failed_fix
+  fi
+  rm -rf "$TMP_DIR"
+  trap - EXIT
+  exit "$status"
+}
+trap cleanup EXIT
+ROLLBACK_DIR="$TMP_DIR/rollback"
+mkdir -p "$ROLLBACK_DIR/install" "$ROLLBACK_DIR/systemd"
+
+SERVICE_WAS_ACTIVE=0
+SERVICE_WAS_ENABLED=0
+TIMER_WAS_ACTIVE=0
+TIMER_WAS_ENABLED=0
+systemctl is-active --quiet mmwx-subinfo-proxy.service 2>/dev/null && SERVICE_WAS_ACTIVE=1
+systemctl is-enabled --quiet mmwx-subinfo-proxy.service 2>/dev/null && SERVICE_WAS_ENABLED=1
+systemctl is-active --quiet mmwx-clash-to-loon-watch.timer 2>/dev/null && TIMER_WAS_ACTIVE=1
+systemctl is-enabled --quiet mmwx-clash-to-loon-watch.timer 2>/dev/null && TIMER_WAS_ENABLED=1
+
+for file in proxy.py proxy.py.header-only watch-clash-to-loon.py diagnose.py \
+  clash-to-loon-image.state clash-to-loon-fallback.retired \
+  notify-subscribe-fetch.previous nginx-config.path nginx-x-location.previous; do
+  [[ -f "$INSTALL_DIR/$file" ]] && cp -a "$INSTALL_DIR/$file" "$ROLLBACK_DIR/install/$file"
+done
+[[ -f $CONFIG_FILE ]] && cp -a "$CONFIG_FILE" "$ROLLBACK_DIR/mmwx-subfix.conf"
+for unit in mmwx-subinfo-proxy.service mmwx-clash-to-loon-watch.service mmwx-clash-to-loon-watch.timer; do
+  [[ -f "/etc/systemd/system/$unit" ]] && cp -a "/etc/systemd/system/$unit" "$ROLLBACK_DIR/systemd/$unit"
+done
 
 fetch_file() {
   local relative="$1" destination="$2"
@@ -95,6 +128,57 @@ if [[ -f "$INSTALL_DIR/proxy.py" ]]; then
   cp -a "$INSTALL_DIR/proxy.py" "$BACKUP_DIR/proxy.py.previous"
 fi
 
+rollback_failed_fix() {
+  [[ $ROLLBACK_DONE -eq 1 ]] && return
+  ROLLBACK_DONE=1
+  set +e
+  echo "验证失败，正在撤销本次安装..." >&2
+  systemctl disable --now mmwx-clash-to-loon-watch.timer mmwx-subinfo-proxy.service 2>/dev/null || true
+
+  for file in proxy.py proxy.py.header-only watch-clash-to-loon.py diagnose.py \
+    clash-to-loon-image.state clash-to-loon-fallback.retired \
+    notify-subscribe-fetch.previous nginx-config.path nginx-x-location.previous; do
+    rm -f "$INSTALL_DIR/$file"
+    [[ -f "$ROLLBACK_DIR/install/$file" ]] && cp -a "$ROLLBACK_DIR/install/$file" "$INSTALL_DIR/$file"
+  done
+
+  if [[ -f "$ROLLBACK_DIR/mmwx-subfix.conf" ]]; then
+    cp -a "$ROLLBACK_DIR/mmwx-subfix.conf" "$CONFIG_FILE"
+  else
+    rm -f "$CONFIG_FILE"
+  fi
+  for unit in mmwx-subinfo-proxy.service mmwx-clash-to-loon-watch.service mmwx-clash-to-loon-watch.timer; do
+    if [[ -f "$ROLLBACK_DIR/systemd/$unit" ]]; then
+      cp -a "$ROLLBACK_DIR/systemd/$unit" "/etc/systemd/system/$unit"
+    else
+      rm -f "/etc/systemd/system/$unit"
+    fi
+  done
+
+  python3 - "$DB" "$PREVIOUS_NOTIFY" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute(
+    "update system_config set notify_subscribe_fetch=?, updated_at=datetime('now') where id=1",
+    (int(sys.argv[2]),),
+)
+con.commit()
+con.close()
+PY
+
+  if [[ -n ${NGINX_CONFIG:-} && -f "$BACKUP_DIR/nginx.conf.previous" ]]; then
+    cp -a "$BACKUP_DIR/nginx.conf.previous" "$NGINX_CONFIG"
+    nginx -t && systemctl reload nginx
+  fi
+
+  systemctl daemon-reload
+  [[ $SERVICE_WAS_ENABLED -eq 1 ]] && systemctl enable mmwx-subinfo-proxy.service >/dev/null 2>&1 || true
+  [[ $SERVICE_WAS_ACTIVE -eq 1 ]] && systemctl start mmwx-subinfo-proxy.service || true
+  [[ $TIMER_WAS_ENABLED -eq 1 ]] && systemctl enable mmwx-clash-to-loon-watch.timer >/dev/null 2>&1 || true
+  [[ $TIMER_WAS_ACTIVE -eq 1 ]] && systemctl start mmwx-clash-to-loon-watch.timer || true
+  set -e
+}
+
 if [[ -f "$INSTALL_DIR/notify-subscribe-fetch.previous" ]]; then
   PREVIOUS_NOTIFY="$(cat "$INSTALL_DIR/notify-subscribe-fetch.previous")"
 else
@@ -109,6 +193,7 @@ PY
   printf '%s\n' "$PREVIOUS_NOTIFY" > "$INSTALL_DIR/notify-subscribe-fetch.previous"
 fi
 
+MUTATION_STARTED=1
 echo "第二步：安装兼容修复..."
 fetch_file "src/proxy.py" "$TMP_DIR/proxy.py"
 fetch_file "src/proxy-header-only.py" "$TMP_DIR/proxy.py.header-only"
@@ -218,7 +303,10 @@ if ! env \
   MMWX_BACKEND="$BACKEND" MMWX_DB="$DB" MMWX_DOMAIN="$DOMAIN" \
   MMWX_CONTAINER="$CONTAINER" MMWX_DIAGNOSTIC_PROXY="http://127.0.0.1:12890" \
   python3 "$INSTALL_DIR/diagnose.py" --mode post | tee "$INSTALL_DIR/last-diagnostic.txt"; then
-  echo "修复无效：请把 $INSTALL_DIR/last-diagnostic.txt 的内容提交给维护者或 AI。" >&2
+  cp -a "$INSTALL_DIR/last-diagnostic.txt" "$BACKUP_DIR/failed-diagnostic.txt"
+  rollback_failed_fix
+  echo "MMWX_FIX_RESULT=检测到Bug，但当前补丁修复无效，已撤销本次安装" >&2
+  echo "诊断报告: $BACKUP_DIR/failed-diagnostic.txt" >&2
   exit 1
 fi
 
