@@ -19,6 +19,7 @@
 ## 适用范围
 
 - 已验证：MMWX `0.5.3`、SQLite、Docker、Nginx、systemd。
+- 已适配：MMWX `0.5.4` 的转换器返回 200 但丢失自定义策略组和代理链的情况。
 - 默认容器名：`miaomiaowux`。
 - 默认后端：`http://127.0.0.1:12889`。
 - 默认数据库：`/opt/miaomiaowux/data/mmwx.db`。

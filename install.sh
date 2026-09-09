@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VERSION="1.1.1"
+VERSION="1.2.0"
 RAW_BASE="${MMWX_FIX_RAW_BASE:-https://raw.githubusercontent.com/kingsnakerrr/mmwx-clash-to-loon-fix/main}"
 INSTALL_DIR="/opt/mmwx-subinfo-proxy"
 CONFIG_FILE="/etc/mmwx-subfix.conf"

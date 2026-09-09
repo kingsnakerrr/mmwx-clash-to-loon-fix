@@ -66,11 +66,28 @@ def official_supports_conversion(code):
         if not all(marker in converted_body for marker in required):
             return False
         config = yaml.safe_load(source_body.decode('utf-8')) or {}
-        has_chain = any(
-            isinstance(proxy, dict) and str(proxy.get('dialer-proxy', '')).strip()
+        output = converted_body.decode('utf-8', errors='replace')
+        groups = [
+            str(group.get('name', '')).strip()
+            for group in config.get('proxy-groups') or []
+            if isinstance(group, dict) and str(group.get('name', '')).strip()
+        ]
+        if any(f'{name} =' not in output for name in groups):
+            return False
+        chains = [
+            str(proxy.get('name', '')).strip()
             for proxy in config.get('proxies') or []
-        )
-        return not has_chain or b'\n[Proxy Chain]\n' in converted_body
+            if isinstance(proxy, dict) and str(proxy.get('dialer-proxy', '')).strip()
+        ]
+        if chains and '[Proxy Chain]' not in output:
+            return False
+        if any(f'{name} =' not in output for name in chains):
+            return False
+        for rule in config.get('rules') or []:
+            parts = [part.strip() for part in str(rule).split(',')]
+            if len(parts) >= 2 and parts[0] == 'MATCH' and f'FINAL,{parts[1]}' not in output:
+                return False
+        return True
     finally:
         source.close()
         converted.close()

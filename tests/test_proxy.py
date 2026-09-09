@@ -45,6 +45,13 @@ class ProxyTests(unittest.TestCase):
         self.assertIn('DOMAIN,example.com,Proxy', rendered)
         self.assertIn('FINAL,DIRECT', rendered)
 
+    def test_official_output_must_preserve_groups_and_chains(self):
+        clash = b'''proxies:\n  - name: Exit\n    dialer-proxy: Relay\nproxy-groups:\n  - name: Netflix\n    type: select\n    proxies: [Exit]\nrules:\n  - MATCH,DIRECT\n'''
+        incomplete = b'[General]\n[Proxy]\n[Proxy Group]\nOther = select, DIRECT\n[Rule]\nFINAL,DIRECT\n'
+        complete = b'[General]\n[Proxy]\n[Proxy Chain]\nExit = Relay, Exit [land]\n[Proxy Group]\nNetflix = select, Exit\n[Rule]\nFINAL,DIRECT\n'
+        self.assertFalse(PROXY.official_conversion_complete(clash, incomplete))
+        self.assertTrue(PROXY.official_conversion_complete(clash, complete))
+
 
 if __name__ == '__main__':
     unittest.main()

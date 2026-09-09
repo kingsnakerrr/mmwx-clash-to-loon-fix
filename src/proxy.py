@@ -267,25 +267,70 @@ def clash_to_loon(clash_data, loon_proxy_data):
     return ('\n\n'.join(sections)).encode('utf-8')
 
 
+def official_conversion_complete(clash_data, loon_data):
+    try:
+        config = yaml.safe_load(clash_data.decode('utf-8')) or {}
+        output = loon_data.decode('utf-8', errors='replace')
+    except Exception:
+        return False
+
+    required = ('[General]', '[Proxy]', '[Proxy Group]', '[Rule]')
+    if not all(section in output for section in required):
+        return False
+
+    groups = [
+        str(group.get('name', '')).strip()
+        for group in config.get('proxy-groups') or []
+        if isinstance(group, dict) and str(group.get('name', '')).strip()
+    ]
+    if any(f'{name} =' not in output for name in groups):
+        return False
+
+    chains = [
+        str(proxy.get('name', '')).strip()
+        for proxy in config.get('proxies') or []
+        if isinstance(proxy, dict) and str(proxy.get('dialer-proxy', '')).strip()
+    ]
+    if chains and '[Proxy Chain]' not in output:
+        return False
+    if any(f'{name} =' not in output for name in chains):
+        return False
+
+    for rule in config.get('rules') or []:
+        parts = [part.strip() for part in str(rule).split(',')]
+        if len(parts) >= 2 and parts[0] == 'MATCH' and f'FINAL,{parts[1]}' not in output:
+            return False
+    return True
+
+
 def maybe_clash_to_loon_fallback(path, headers, response, body):
     client_type = query_type(path)
     supported = {'clash-to-loon', 'clash-to-loon-kelee'}
     if client_type not in supported or not package_assignment(path):
         return None
     marker = f"producer type '{client_type}' not found".encode('utf-8')
-    if response.status != 500 or marker not in body:
+    missing_producer = response.status == 500 and marker in body
+    if response.status != 200 and not missing_producer:
         return None
 
     clash_response = fetch_backend(with_query_type(path, 'clash'), headers)
-    loon_response = fetch_backend(with_query_type(path, 'loon'), headers)
     try:
-        if clash_response.status != 200 or loon_response.status != 200:
+        if clash_response.status != 200:
             return None
-        converted = clash_to_loon(clash_response.read(), loon_response.read())
-        return converted, clash_response.headers
+        clash_data = clash_response.read()
+        if response.status == 200 and official_conversion_complete(clash_data, body):
+            return None
+        print('official clash-to-loon output incomplete; applying fallback', flush=True)
+        loon_response = fetch_backend(with_query_type(path, 'loon'), headers)
+        try:
+            if loon_response.status != 200:
+                return None
+            converted = clash_to_loon(clash_data, loon_response.read())
+            return converted, clash_response.headers
+        finally:
+            loon_response.close()
     finally:
         clash_response.close()
-        loon_response.close()
 
 
 def user_info(username):
